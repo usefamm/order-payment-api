@@ -1,0 +1,696 @@
+{
+  "info": {
+    "name": "Order & Payment API",
+    "description": "Run Auth first (it stores the tokens), then the other folders in order.\n\nVariables are saved automatically as you go: productId, orderId, paymentRef.\n\nThe Scenarios folder reproduces the tricky cases from the task: duplicate callbacks, reused idempotency keys, amount tampering and two concurrent buyers for the last unit.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "token", "value": "" },
+    { "key": "adminToken", "value": "" },
+    { "key": "productId", "value": "" },
+    { "key": "orderId", "value": "" },
+    { "key": "paymentRef", "value": "" },
+    { "key": "idempotencyKey", "value": "abc-123" }
+  ],
+  "item": [
+    {
+      "name": "1. Auth",
+      "item": [
+        {
+          "name": "Register customer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201, or 409 if you already ran this once', () => {",
+                  "  pm.expect([201, 409]).to.include(pm.response.code);",
+                  "  const body = pm.response.json();",
+                  "  if (body.data && body.data.token) pm.collectionVariables.set('token', body.data.token);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/auth/register", "host": ["{{baseUrl}}"], "path": ["auth", "register"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Zara Lee\",\n  \"email\": \"zara@example.com\",\n  \"password\": \"secret123\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login customer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 and token returned', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.collectionVariables.set('token', pm.response.json().data.token);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"zara@example.com\",\n  \"password\": \"secret123\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login admin (from npm run seed)",
+          "description": "Needs `npm run seed` to have been run once. Creates admin@example.com / admin12345.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, role is admin', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.data.user.role).to.eql('admin');",
+                  "  pm.collectionVariables.set('adminToken', body.data.token);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"admin12345\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login with wrong password (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 with INVALID_CREDENTIALS', () => {",
+                  "  pm.response.to.have.status(401);",
+                  "  pm.expect(pm.response.json().code).to.eql('INVALID_CREDENTIALS');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"zara@example.com\",\n  \"password\": \"totally-wrong\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Logout (revokes token)",
+          "description": "After this, the saved token stops working until you log in again.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 revoked', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().data.revoked).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth", "logout"] }
+          }
+        },
+        {
+          "name": "Reuse token after logout (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 revoked token rejected', () => {",
+                  "  pm.response.to.have.status(401);",
+                  "  pm.expect(pm.response.json().code).to.eql('UNAUTHORIZED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/orders/000000000000000000000000", "host": ["{{baseUrl}}"], "path": ["orders", "000000000000000000000000"] }
+          }
+        },
+        {
+          "name": "Login again (restore session)",
+          "description": "The logout above killed the current token, so get a fresh one before the rest of the run.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 new token issued', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.collectionVariables.set('token', pm.response.json().data.token);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"zara@example.com\",\n  \"password\": \"secret123\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Products",
+      "item": [
+        {
+          "name": "Create product (admin)",
+          "auth": {
+            "type": "bearer",
+            "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 created', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.collectionVariables.set('productId', pm.response.json().data.id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/products", "host": ["{{baseUrl}}"], "path": ["products"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Mechanical Keyboard\",\n  \"price\": 2000000,\n  \"stock\": 10\n}"
+            }
+          }
+        },
+        {
+          "name": "Create product as customer (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('403 forbidden', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/products", "host": ["{{baseUrl}}"], "path": ["products"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Sneaky Item\",\n  \"price\": 1,\n  \"stock\": 5\n}" }
+          }
+        },
+        {
+          "name": "Create product with invalid price (400)",
+          "auth": {
+            "type": "bearer",
+            "bearer": [{ "key": "token", "value": "{{adminToken}}", "type": "string" }]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 validation error with details', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.code).to.eql('VALIDATION_ERROR');",
+                  "  pm.expect(body.details).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/products", "host": ["{{baseUrl}}"], "path": ["products"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Bad Item\",\n  \"price\": -50,\n  \"stock\": 2\n}" }
+          }
+        },
+        {
+          "name": "List products",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/products", "host": ["{{baseUrl}}"], "path": ["products"] }
+          }
+        },
+        {
+          "name": "Get product by id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 and has the required fields', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d).to.include.keys('id', 'name', 'price', 'stock', 'isActive');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/products/{{productId}}", "host": ["{{baseUrl}}"], "path": ["products", "{{productId}}"] }
+          }
+        },
+        {
+          "name": "Get product with bad id (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 not a stack trace', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().message).to.not.include('at ');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/products/not-an-object-id", "host": ["{{baseUrl}}"], "path": ["products", "not-an-object-id"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Orders",
+      "item": [
+        {
+          "name": "Create order",
+          "description": "Sends an extra price field on purpose: the server must ignore it and use the product price.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201, total computed server-side', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const d = pm.response.json().data;",
+                  "  pm.collectionVariables.set('orderId', d.id);",
+                  "  pm.expect(d.status).to.eql('pending');",
+                  "  // client sent price:1, product is 2000000 and quantity is 2",
+                  "  pm.expect(d.totalPrice).to.eql(4000000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"productId\": \"{{productId}}\", \"quantity\": 2, \"price\": 1 }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Get order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with snapshotted unit price', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().data.items[0].unitPrice).to.eql(2000000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/orders/{{orderId}}", "host": ["{{baseUrl}}"], "path": ["orders", "{{orderId}}"] }
+          }
+        },
+        {
+          "name": "Create order for missing product (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('404 product not found', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"productId\": \"000000000000000000000000\", \"quantity\": 1 }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Create order with quantity 0 (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 quantity must be positive', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"productId\": \"{{productId}}\", \"quantity\": 0 }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Create order without auth (401)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"items\": [\n    { \"productId\": \"{{productId}}\", \"quantity\": 1 }\n  ]\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Payments",
+      "item": [
+        {
+          "name": "Create payment (with Idempotency-Key)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 pending, amount from the order', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const d = pm.response.json().data;",
+                  "  pm.collectionVariables.set('paymentRef', d.providerRef);",
+                  "  pm.expect(d.status).to.eql('pending');",
+                  "  pm.expect(d.amount).to.eql(4000000);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/payments", "host": ["{{baseUrl}}"], "path": ["payments"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"orderId\": \"{{orderId}}\",\n  \"amount\": 4000000\n}" }
+          }
+        },
+        {
+          "name": "Create payment again, same key (no duplicate)",
+          "description": "Must return the same payment id, not create a second charge.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('same payment returned', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d.providerRef).to.eql(pm.collectionVariables.get('paymentRef'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/payments", "host": ["{{baseUrl}}"], "path": ["payments"] },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"orderId\": \"{{orderId}}\",\n  \"amount\": 4000000\n}" }
+          }
+        },
+        {
+          "name": "Create payment with wrong amount (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('amount tampering rejected', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().code).to.eql('PAYMENT_AMOUNT_MISMATCH');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/payments", "host": ["{{baseUrl}}"], "path": ["payments"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"orderId\": \"{{orderId}}\",\n  \"amount\": 100000\n}" }
+          }
+        },
+        {
+          "name": "Provider callback #1 (succeeds)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/payments/callback", "host": ["{{baseUrl}}"], "path": ["payments", "callback"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentRef\": \"{{paymentRef}}\",\n  \"status\": \"succeeded\"\n}"
+            },
+            "description": "Expect data.processed = true."
+          }
+        },
+        {
+          "name": "Provider callback #2 and #3 (no-op)",
+          "description": "Sends two more duplicate callbacks in one run and checks the order was only paid once.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ref = pm.collectionVariables.get('paymentRef');",
+                  "const url = pm.collectionVariables.get('baseUrl') + '/payments/callback';",
+                  "",
+                  "pm.sendRequest({ url, method: 'POST', header: { 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ paymentRef: ref, status: 'succeeded' }) } }, (e, r) => {",
+                  "  pm.test('duplicate callback #2 is a no-op', () => {",
+                  "    pm.expect(r.code).to.eql(200);",
+                  "    pm.expect(r.json().data.processed).to.be.false;",
+                  "  });",
+                  "});",
+                  "",
+                  "pm.sendRequest({ url, method: 'POST', header: { 'Content-Type': 'application/json' },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ paymentRef: ref, status: 'succeeded' }) } }, (e, r) => {",
+                  "  pm.test('duplicate callback #3 is a no-op', () => {",
+                  "    pm.expect(r.code).to.eql(200);",
+                  "    pm.expect(r.json().data.processed).to.be.false;",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/payments/callback", "host": ["{{baseUrl}}"], "path": ["payments", "callback"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentRef\": \"{{paymentRef}}\",\n  \"status\": \"succeeded\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Order is now paid",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is paid', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().data.status).to.eql('paid');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/orders/{{orderId}}", "host": ["{{baseUrl}}"], "path": ["orders", "{{orderId}}"] }
+          }
+        },
+        {
+          "name": "Pay a paid order again (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('order not payable twice', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().code).to.eql('ORDER_NOT_PAYABLE');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/payments", "host": ["{{baseUrl}}"], "path": ["payments"] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"orderId\": \"{{orderId}}\"\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Race condition",
+      "item": [
+        {
+          "name": "Two buyers, one unit in stock",
+          "description": "Creates a product with stock 1, then fires two order requests at the same instant. Exactly one must win and stock must land on 0, never negative.",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const base = pm.collectionVariables.get('baseUrl');",
+                  "const adminToken = pm.collectionVariables.get('adminToken');",
+                  "const token = pm.collectionVariables.get('token');",
+                  "",
+                  "// one fresh product with a single unit of stock",
+                  "pm.sendRequest({",
+                  "  url: base + '/products', method: 'POST',",
+                  "  header: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + adminToken },",
+                  "  body: { mode: 'raw', raw: JSON.stringify({ name: 'Last Unit', price: 100000, stock: 1 }) }",
+                  "}, (err, res) => {",
+                  "  pm.test('fixture product created', () => pm.expect(res.code).to.eql(201));",
+                  "  const pid = res.json().data.id;",
+                  "  const fire = () => new Promise((resolve) => {",
+                  "    pm.sendRequest({",
+                  "      url: base + '/orders', method: 'POST',",
+                  "      header: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },",
+                  "      body: { mode: 'raw', raw: JSON.stringify({ items: [{ productId: pid, quantity: 1 }] }) }",
+                  "    }, (e, r) => resolve(r.code));",
+                  "  });",
+                  "",
+                  "  Promise.all([fire(), fire()]).then(async (codes) => {",
+                  "    const sorted = codes.slice().sort();",
+                  "    pm.test('exactly one order succeeded', () => pm.expect(sorted).to.eql([201, 409]));",
+                  "",
+                  "    const after = await new Promise((resolve) =>",
+                  "      pm.sendRequest(base + '/products/' + pid, (e, r) => resolve(r.json().data)));",
+                  "    pm.test('stock settled at 0, never negative', () => {",
+                  "      pm.expect(after.stock).to.eql(0);",
+                  "      pm.expect(after.stock).to.be.above(-1);",
+                  "    });",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+          }
+        }
+      ]
+    }
+  ]
+}
