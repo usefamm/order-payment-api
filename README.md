@@ -2,7 +2,7 @@
 
 A small REST backend for a shop where a user creates an order, pays for it, and a
 (very fake) payment provider calls us back to confirm. Built with Node.js,
-TypeScript, Express and MongoDB/Mongoose. No UI — the backend is the point.
+TypeScript, Express and MongoDB/Mongoose. No UI - the backend is the point.
 
 ## Running it
 
@@ -15,7 +15,7 @@ npm run dev               # http://localhost:3000
 
 Admin login after seeding: `admin@example.com` / `admin12345`.
 
-Tests need no MongoDB of your own — they spin up an in-memory one:
+Tests need no MongoDB of your own - they spin up an in-memory one:
 
 ```bash
 npm test
@@ -100,7 +100,7 @@ never go negative.
 **Why reserve at creation instead of at the callback?** The task's diagram places
 "Decrease Inventory" after payment confirmation. I moved the decrement earlier on
 purpose: reserving at the callback means N pending orders can all "look" valid and
-then fail at confirmation once stock is gone — worse UX and it leans on
+then fail at confirmation once stock is gone - worse UX and it leans on
 multi-document transactions. Reserving up front is the safe default for a real
 shop. If you'd rather hold stock only after payment, the same guarded `$inc` just
 moves into the callback path and order creation becomes a non-binding check.
@@ -108,7 +108,7 @@ moves into the callback path and order creation becomes a non-binding check.
 For multi-item orders, an early failure rolls back the lines already reserved
 (`releaseStock`). This compensation is best-effort on a standalone Mongo. On a
 replica set I'd wrap the whole create in a session/transaction so partial
-reservations are impossible by construction — I kept it transaction-free so the
+reservations are impossible by construction - I kept it transaction-free so the
 project runs against a plain `mongod`, but the rollback path is there so the
 invariant holds either way.
 
@@ -131,7 +131,7 @@ The order request is validated with a zod schema that only allows `productId` an
 `quantity`, and `.strip()` drops anything else. A client-sent `price` is silently
 discarded. The unit price is read from the **Product document** and copied onto the
 order item (`unitPrice`, `lineTotal`, `totalPrice`). Because prices are snapshotted
-into the order, changing `Product.price` later never rewrites an existing order —
+into the order, changing `Product.price` later never rewrites an existing order -
 covered by a test.
 
 ### 4. Payment amount tampering
@@ -149,7 +149,7 @@ state rather than re-deriving money from any client input.
 ## Statuses as a business rule
 
 Order statuses: `pending`, `paid`, `cancelled`, `failed`. There is **no**
-`PATCH /orders/:id` — a client can't set `status: "Paid"`. Transitions happen only
+`PATCH /orders/:id` - a client can't set `status: "Paid"`. Transitions happen only
 through the service, guarded by atomic conditional updates:
 
 - `pending → paid` only when a payment callback confirms success.
@@ -198,7 +198,7 @@ responses share a `{ success: true, data }` envelope.
 | Collection | Index | Why / queries that use it |
 |------------|-------|---------------------------|
 | `users` | `email` (unique) | Login looks up by email on every request; uniqueness prevents duplicate accounts. |
-| `products` | `isActive, createdAt` | `GET /products` lists active items newest-first — the filter and sort both fit this compound index. |
+| `products` | `isActive, createdAt` | `GET /products` lists active items newest-first - the filter and sort both fit this compound index. |
 | `products` | `name` | Catalog search / dedupe by name. |
 | `orders` | `userId, createdAt` | "My orders" list, scoped to a user and sorted by date. |
 | `orders` | `status, createdAt` | Ops/dashboard queries filtering by status over a time range. |
@@ -234,13 +234,13 @@ if (!(await tokenStore.exists(payload.jti))) throw AppError.unauthorized(...);
 
 So a request needs both a valid signature **and** a live entry in Redis. `POST
 /auth/logout` deletes the `jti`, so the very same still-unexpired token is rejected
-immediately afterwards — real, server-side revocation. `POST /auth/login` (the
+immediately afterwards - real, server-side revocation. `POST /auth/login` (the
 required endpoint) and the store check are covered in `tests/auth.test.ts`.
 
 The store sits behind a tiny `TokenStore` interface with two implementations:
 `RedisTokenStore` (used when `REDIS_URL` is set) and an in-memory one used by the
 test suite, so tests stay self-contained. Keeping it to `save/exists/remove` on a
-single key is deliberate — it's the smallest thing that gives revocation without
+single key is deliberate - it's the smallest thing that gives revocation without
 pulling in a session framework. A natural next step is a short-lived access token
 plus a refresh token stored the same way.
 
@@ -257,7 +257,7 @@ plus a refresh token stored the same way.
 - `helmet`, request body size cap, and a rate limiter on `/auth`.
 - Access tokens are tracked in Redis by `jti`, so logout revokes them before expiry.
 - The callback endpoint is intentionally unauthenticated (it "comes from the
-  provider"); in a real integration it would require a verified signature — a
+  provider"); in a real integration it would require a verified signature - a
   `signature` field is already reserved in the schema for that.
 
 ## Honest trade-offs / what I'd do next

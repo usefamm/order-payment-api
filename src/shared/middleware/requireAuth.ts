@@ -33,7 +33,7 @@ export function requireAuth(roles?: string[]): RequestHandler {
         throw AppError.unauthorized('Invalid or expired token');
       }
 
-      // Server-side liveness check — this is what makes logout real.
+      // Server-side liveness check, this is what makes logout real.
       if (!(await tokenStore.exists(payload.jti))) {
         throw AppError.unauthorized('Token revoked or expired');
       }

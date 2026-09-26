@@ -3,7 +3,7 @@ import { config } from '../../config/env';
 
 /**
  * Server-side registry of issued access tokens. The JWT still proves its own
- * signature, but every request must also find its `jti` in this store — which
+ * signature, but every request must also find its `jti` in this store, which
  * means logout (or an admin sweep) can revoke a token instantly instead of
  * waiting for it to expire.
  */
