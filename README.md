@@ -195,16 +195,16 @@ responses share a `{ success: true, data }` envelope.
 
 ## Database indexes
 
-| Collection | Index | Why / queries that use it |
-|------------|-------|---------------------------|
-| `users` | `email` (unique) | Login looks up by email on every request; uniqueness prevents duplicate accounts. |
-| `products` | `isActive, createdAt` | `GET /products` lists active items newest-first - the filter and sort both fit this compound index. |
-| `products` | `name` | Catalog search / dedupe by name. |
-| `orders` | `userId, createdAt` | "My orders" list, scoped to a user and sorted by date. |
-| `orders` | `status, createdAt` | Ops/dashboard queries filtering by status over a time range. |
-| `payments` | `providerRef` (unique) | Callbacks are keyed by provider reference; uniqueness guarantees one payment per ref. |
+| Collection | Index                             | Why / queries that use it                                                                             |
+| ---------- | --------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `users`    | `email` (unique)                  | Login looks up by email on every request; uniqueness prevents duplicate accounts.                     |
+| `products` | `isActive, createdAt`             | `GET /products` lists active items newest-first - the filter and sort both fit this compound index.   |
+| `products` | `name`                            | Catalog search / dedupe by name.                                                                      |
+| `orders`   | `userId, createdAt`               | "My orders" list, scoped to a user and sorted by date.                                                |
+| `orders`   | `status, createdAt`               | Ops/dashboard queries filtering by status over a time range.                                          |
+| `payments` | `providerRef` (unique)            | Callbacks are keyed by provider reference; uniqueness guarantees one payment per ref.                 |
 | `payments` | `idempotencyKey` (unique, sparse) | Enforces idempotent creation even under concurrent retries; sparse so keyless payments don't collide. |
-| `payments` | `orderId, status` | Looking up the payment(s) for an order. |
+| `payments` | `orderId, status`                 | Looking up the payment(s) for an order.                                                               |
 
 Mongoose builds these automatically (`autoIndex`) when the models are first used,
 which is also how the test run gets them.
@@ -259,21 +259,3 @@ plus a refresh token stored the same way.
 - The callback endpoint is intentionally unauthenticated (it "comes from the
   provider"); in a real integration it would require a verified signature - a
   `signature` field is already reserved in the schema for that.
-
-## Honest trade-offs / what I'd do next
-
-- **No MongoDB transactions.** I chose guarded atomic per-document updates plus
-  compensation over multi-document transactions so the API runs on a standalone
-  `mongod`. On a replica set, wrapping order creation (multi-item stock) and the
-  callback (payment + order + stock) in transactions would be the stronger, simpler
-  to reason about choice.
-- **Reservation lifetime.** Reserving at order creation holds stock until the payment
-  resolves or fails. A real system would add TTL-based expiry for abandoned pending
-  orders (a job or a Mongo TTL index that releases the reservation).
-- **Outbox / retries for the callback.** Here the callback is processed inline. In
-  production I'd acknowledge fast and process via a queue so provider retries never
-  do heavy work synchronously.
-- **Payment state machine** is deliberately small (`pending/succeeded/failed`); a real
-  provider has partial refunds, disputes, etc.
-- The fake provider is inline in the payment service; a real one would sit behind an
-  interface (a `PaymentProvider` port) so it can be swapped or mocked.
