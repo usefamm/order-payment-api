@@ -687,7 +687,8 @@
           ],
           "request": {
             "method": "GET",
-            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+            "url": { "raw": "{{baseUrl}}/products", "host": ["{{baseUrl}}"], "path": ["products"] },
+            "description": "Placeholder request - the actual race condition test fires two concurrent POST /orders calls inside the Tests script using pm.sendRequest."
           }
         }
       ]
