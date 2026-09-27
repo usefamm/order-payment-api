@@ -641,8 +641,29 @@
       "name": "5. Race condition",
       "item": [
         {
-          "name": "Two buyers, one unit in stock",
-          "description": "Creates a product with stock 1, then fires two order requests at the same instant. Exactly one must win and stock must land on 0, never negative.",
+          "name": "Step 1: create product with stock 1 (as admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('product created', () => pm.expect(pm.response.code).to.eql(201));",
+                  "pm.collectionVariables.set('raceProductId', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "body": { "mode": "raw", "raw": "{\"name\":\"Race Condition Product\",\"price\":100000,\"stock\":1}" },
+            "url": { "raw": "{{baseUrl}}/products", "host": ["{{baseUrl}}"], "path": ["products"] }
+          }
+        },
+        {
+          "name": "Step 2: both buyers order simultaneously",
+          "description": "Fires two concurrent POST /orders for the same last unit. Exactly one must get 201, the other 409.",
           "event": [
             {
               "listen": "test",
@@ -650,36 +671,45 @@
                 "type": "text/javascript",
                 "exec": [
                   "const base = pm.collectionVariables.get('baseUrl');",
-                  "const adminToken = pm.collectionVariables.get('adminToken');",
                   "const token = pm.collectionVariables.get('token');",
+                  "const pid = pm.collectionVariables.get('raceProductId');",
                   "",
-                  "// one fresh product with a single unit of stock",
-                  "pm.sendRequest({",
-                  "  url: base + '/products', method: 'POST',",
-                  "  header: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + adminToken },",
-                  "  body: { mode: 'raw', raw: JSON.stringify({ name: 'Last Unit', price: 100000, stock: 1 }) }",
-                  "}, (err, res) => {",
-                  "  pm.test('fixture product created', () => pm.expect(res.code).to.eql(201));",
-                  "  const pid = res.json().data.id;",
-                  "  const fire = () => new Promise((resolve) => {",
-                  "    pm.sendRequest({",
-                  "      url: base + '/orders', method: 'POST',",
-                  "      header: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },",
-                  "      body: { mode: 'raw', raw: JSON.stringify({ items: [{ productId: pid, quantity: 1 }] }) }",
-                  "    }, (e, r) => resolve(r.code));",
-                  "  });",
+                  "const fire = () => new Promise((resolve) => {",
+                  "  pm.sendRequest({",
+                  "    url: base + '/orders', method: 'POST',",
+                  "    header: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },",
+                  "    body: { mode: 'raw', raw: JSON.stringify({ items: [{ productId: pid, quantity: 1 }] }) }",
+                  "  }, (e, r) => resolve(r.code));",
+                  "});",
                   "",
-                  "  Promise.all([fire(), fire()]).then(async (codes) => {",
-                  "    const sorted = codes.slice().sort();",
-                  "    pm.test('exactly one order succeeded', () => pm.expect(sorted).to.eql([201, 409]));",
-                  "",
-                  "    const after = await new Promise((resolve) =>",
-                  "      pm.sendRequest(base + '/products/' + pid, (e, r) => resolve(r.json().data)));",
-                  "    pm.test('stock settled at 0, never negative', () => {",
-                  "      pm.expect(after.stock).to.eql(0);",
-                  "      pm.expect(after.stock).to.be.above(-1);",
-                  "    });",
-                  "  });",
+                  "Promise.all([fire(), fire()]).then(async (codes) => {",
+                  "  const sorted = codes.slice().sort((a,b) => a-b);",
+                  "  pm.test('exactly one 201 and one 409', () => pm.expect(sorted).to.eql([201, 409]));",
+                  "  pm.collectionVariables.set('raceCodeA', codes[0]);",
+                  "  pm.collectionVariables.set('raceCodeB', codes[1]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "body": { "mode": "raw", "raw": "{\"items\":[{\"productId\":\"{{raceProductId}}\",\"quantity\":1}]}" },
+            "url": { "raw": "{{baseUrl}}/orders", "host": ["{{baseUrl}}"], "path": ["orders"] }
+          }
+        },
+        {
+          "name": "Step 3: verify stock landed on 0",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json().data;",
+                  "pm.test('stock is exactly 0 (sold once, never negative)', () => {",
+                  "  pm.expect(data.stock).to.eql(0);",
                   "});"
                 ]
               }
@@ -687,8 +717,7 @@
           ],
           "request": {
             "method": "GET",
-            "url": { "raw": "{{baseUrl}}/products", "host": ["{{baseUrl}}"], "path": ["products"] },
-            "description": "Placeholder request - the actual race condition test fires two concurrent POST /orders calls inside the Tests script using pm.sendRequest."
+            "url": { "raw": "{{baseUrl}}/products/{{raceProductId}}", "host": ["{{baseUrl}}"], "path": ["products", "{{raceProductId}}"] }
           }
         }
       ]
